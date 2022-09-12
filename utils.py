@@ -1,4 +1,3 @@
-from gnosis.safe.safe_tx import SafeTx
 import json
 import logging
 

@@ -10,15 +10,19 @@ class State(Model):
     class Meta:
         database = db
 
+# burns
+
 class Stake(Model):
     hash = CharField()
     amount = FloatField()
-    initiated_height = IntegerField()
-    completed_height = IntegerField(null = True)
+    initiated_height = IntegerField() # height the stake was submitted on eth
+    completed_height = IntegerField(null = True) # chainflip confirmation on chainflip chain
+    address = CharField()
 
     class Meta:
         database = db
 
+# this class doesn't really do anything, but there for easy access.
 class Validator(Model):
     address = CharField()
     staked_amount = FloatField()
