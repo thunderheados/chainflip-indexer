@@ -30,10 +30,10 @@ class Indexer:
 
         # create providers
         self.eth_primary = Web3(
-            Web3.WebsocketProvider(primary_node_evm, websocket_timeout=30)
+            Web3.HTTPProvider(primary_node_evm)
         )
         self.eth_secondary = Web3(
-            Web3.WebsocketProvider(secondary_node_evm, websocket_timeout=30)
+            Web3.HTTPProvider(secondary_node_evm)
         )
 
         self.chainflip_primary = SubstrateInterface(url=primary_node_substrate)
@@ -53,45 +53,85 @@ class Indexer:
         self.flip_staker_contracts= [self.flip_staker_contract_primary, self.flip_staker_contract_primary]
 
         self.state = State[1]
+        self.logger.info(self.eth_primary.eth.block_number)
 
     # safely query/send query/transaction 
-    def safely_execute(self, objs: List[Web3], func: str, params):
+    def safely_execute(self, objs: list, funcs: List[str], params: list=None):
         for obj in objs:
-            r = CALL_RETRIES
+            f = None
+            for i, func in enumerate(funcs): 
+                r = CALL_RETRIES
 
-            while r > 0:
-                try:
-                    n = multi_getattr(obj, func)
-                    if type(params) == list:
-                        result = n(*params)
-                    elif type(params) == dict:
-                        result = n(**params)
-                    else:
-                        self.logger.critical("Invalid parameter type for safely_execute: {}".format(type(params)))
+                while r > 0:
+                    try:
+                        if i == 0:
+                            n = multi_getattr(obj, func)
+                        else:
+                            n = multi_getattr(f, func)
+                        
+                        # check if n is a method object
+                        if not callable(n):
+                            return n
 
-                        raise (TypeError("Invalid type"))
-                    return result
-                except Exception as e:
-                    self.logger.warning(
-                        "Failed to execute function {} on {}. Error: {}. Params: {}. Retries: {}".format(
-                            func, obj, e, params, r 
+                        if params:
+                            p = params[i]
+                            if type(p) == list:
+                                result = n(*p)
+                            elif type(p) == dict:
+                                result = n(**p)
+                            else:
+                                self.logger.critical("Invalid parameter type for safely_execute: {}".format(type(p)))
+                                raise (TypeError("Invalid type"))
+                        else:
+                            result = n()
+
+                        f = result
+                        break
+
+                    except Exception as e:
+                        f = None
+                        self.logger.warning(
+                            "Failed to execute function {} on {}. Error: {}. Params: {}. Retries: {}".format(
+                                func, obj, e, params, r 
+                            )
                         )
-                    )
 
-                    r -= 1
+                        r -= 1
 
-            self.logger.warning("Falling back to another object.")
+            if f == None:
+                self.logger.warning("Falling back to another object.")
+            else:
+                return f
+            
+
+        self.logger.critical(
+            "All objs failed to safely execute. {} could not execute on {}".format(
+                func, objs
+            )
+        )
+        raise (
+            ValueError(
+                "All objs failed to safely execute. {} could not execute on {}".format(
+                    func, objs
+                )
+            )
+        )
 
     def watch_stakes(self): # ethereum
+        self.logger.info("Started watching stakes")
         while True:
+            self.logger.info("Checking for new stakes")
             previous_height = self.state.ethereum_height
-            current_height = self.safely_execute(self.eth_nodes, "eth.get_block_number", []) - ETH_REORG_PROTECTION
+            current_height = self.safely_execute(self.eth_nodes, ["eth.block_number"]) - ETH_REORG_PROTECTION
+            self.logger.info("Current height: {}".format(current_height))
+
+            self.logger.info("Getting stakes between {} and {}".format(previous_height, current_height))
 
             if current_height - previous_height < ETH_BLOCK_DELAY:
                 time.sleep(2)
                 continue
 
-            event_filter = self.safely_execute(self.flip_staker_contracts, "events.Staked.createFilter", {"fromBlock": hex(previous_height), "toBlock": hex(current_height)})
+            event_filter = self.safely_execute(self.flip_staker_contracts, ["events.Staked.createFilter"], [{"fromBlock": hex(previous_height), "toBlock": hex(current_height)}])
             stakes = event_filter.get_all_entries()
             self.logger.info("A total of {} stake events found between {} and {}".format(len(stakes), previous_height, current_height))
 
@@ -103,20 +143,25 @@ class Indexer:
             self.state.save()
 
     def get_confirmations(self, block: int): # gets according stakes on the chainflip chain
-        hash = self.safely_execute(self.chainflip_nodes, "get_block_hash", [block])
+        hash = self.safely_execute(self.chainflip_nodes, ["get_block_hash"], [[block]])
 
-        events = self.safely_execute(self.chainflip_nodes, "get_events", [hash])
+        events = self.safely_execute(self.chainflip_nodes, ["get_events"], [[hash]])
 
         for event in events:
             # figure out unstakes as well
             if event.value["event_id"] == "Staked":
                 # args look like (address, staked_amount, <not sure yet, but is always the same as staked_amount>)
                 args = event.value["attributes"]
+                self.logger.info(args)
 
                 # TODO: the txhash in the event has not been implemented yet, but will be soon by the chainflip team
-                # stake = Stake.select().where(Stake.hash==args[3])
-                # stake.completed_height = block
-                # stake.save()
+                stake = Stake.select().where(Stake.address==args[0], Stake.amount==args[1]).first()
+                if stake == None:
+                    self.logger.warning("Stake not found for event: {}".format(event))
+                    stake = Stake.create(address=args[0], amount=args[1], confirmed_height=block)
+                else:
+                    stake.completed_height = block
+                    stake.save()
 
                 if Validator.select().where(Validator.address==args[0]).count() == 0:
                     Validator.create(address=args[0], staked_amount=args[1], rewards=0)
@@ -128,15 +173,15 @@ class Indexer:
                     v.save()
 
                     self.logger.info("Added {} balance to validator {}".format(args[1], args[0]))
-            elif event.value["event_id"] == "ClaimExpired":
-                self.logger.info(event)
+            elif "claim" in event.value["event_id"].lower():
+                self.logger.info("Event")
 
         return True
 
     def watch_confirmations(self):
         while True:
             previous_height = self.state.chainflip_height
-            current_height = self.safely_execute(self.chainflip_nodes, "get_block", [])["header"]["number"] - CHAINFLIP_REORG_PROTECTION
+            current_height = self.safely_execute(self.chainflip_nodes, ["get_block"])["header"]["number"] - CHAINFLIP_REORG_PROTECTION
 
             if current_height - previous_height < CHAINFLIP_BLOCK_DELAY:
                 time.sleep(2)

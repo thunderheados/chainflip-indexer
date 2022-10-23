@@ -13,9 +13,9 @@ class State(Model):
 # burns
 
 class Stake(Model):
-    hash = CharField()
+    hash = CharField(null = True)
     amount = FloatField()
-    initiated_height = IntegerField() # height the stake was submitted on eth
+    initiated_height = IntegerField(null = True) # height the stake was submitted on eth
     completed_height = IntegerField(null = True) # chainflip confirmation on chainflip chain
     address = CharField()
 
