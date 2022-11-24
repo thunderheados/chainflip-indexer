@@ -18,8 +18,8 @@ def get_balance(address: str, ethereum_height: int, chainflip_height: int) -> di
         raise InvalidBlockHeight() 
 
 
-    block_hash = indexer.safely_execute(indexer.chainflip_nodes, "get_block_hash", params=[chainflip_height])
-    validator_balance = indexer.safely_execute(indexer.chainflip_nodes, "query", params={"module": "Flip", "storage_function": "Account", "block_hash": block_hash, "params": [address]})['stake']
+    block_hash = indexer.chainflip.get_block_hash(chainflip_height)
+    validator_balance = indexer.chainflip.query({"module": "Flip", "storage_function": "Account", "block_hash": block_hash, "params": [address]})['stake']
 
     stakes = Stake.select().where(Stake.address==address, Stake.initiated_height <= ethereum_height, Stake.completed_height >= chainflip_height) # pending stakes
     # TODo: incoroporate claims and claimexpired.

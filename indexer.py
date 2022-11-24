@@ -23,106 +23,30 @@ class Indexer:
         self,
         flip_staker_address: str,
         flip_staker_abi_path: str,
-        primary_node_evm: str,
-        secondary_node_evm: str,
-        primary_node_substrate: str,
-        secondary_node_substrate: str,):
+        node_evm: str,
+        node_substrate: str):
 
         # create providers
-        self.eth_primary = Web3(
-            Web3.HTTPProvider(primary_node_evm)
-        )
-        self.eth_secondary = Web3(
-            Web3.HTTPProvider(secondary_node_evm)
+        self.eth = Web3(
+            Web3.HTTPProvider(node_evm)
         )
 
-        self.chainflip_primary = SubstrateInterface(url=primary_node_substrate)
-        self.chainflip_secondary = SubstrateInterface(url=secondary_node_substrate)
+        self.chainflip = SubstrateInterface(url=node_substrate)
 
-        self.flip_staker_contract_primary = self.eth_primary.eth.contract(
-            address=flip_staker_address, abi=get_abi(flip_staker_abi_path)
-        )
-        self.flip_staker_contract_secondary = self.eth_secondary.eth.contract(
+        self.flip_staker_contract = self.eth.eth.contract(
             address=flip_staker_address, abi=get_abi(flip_staker_abi_path)
         )
 
         self.logger = logger
 
-        self.chainflip_nodes = [self.chainflip_primary, self.chainflip_secondary]
-        self.eth_nodes = [self.eth_primary, self.eth_secondary]
-        self.flip_staker_contracts= [self.flip_staker_contract_primary, self.flip_staker_contract_primary]
-
         self.state = State[1]
-        self.logger.info(self.eth_primary.eth.block_number)
-
-    # safely query/send query/transaction 
-    def safely_execute(self, objs: list, funcs: List[str], params: list=None):
-        for obj in objs:
-            f = None
-            for i, func in enumerate(funcs): 
-                r = CALL_RETRIES
-
-                while r > 0:
-                    try:
-                        if i == 0:
-                            n = multi_getattr(obj, func)
-                        else:
-                            n = multi_getattr(f, func)
-                        
-                        # check if n is a method object
-                        if not callable(n):
-                            return n
-
-                        if params:
-                            p = params[i]
-                            if type(p) == list:
-                                result = n(*p)
-                            elif type(p) == dict:
-                                result = n(**p)
-                            else:
-                                self.logger.critical("Invalid parameter type for safely_execute: {}".format(type(p)))
-                                raise (TypeError("Invalid type"))
-                        else:
-                            result = n()
-
-                        f = result
-                        break
-
-                    except Exception as e:
-                        f = None
-                        self.logger.warning(
-                            "Failed to execute function {} on {}. Error: {}. Params: {}. Retries: {}".format(
-                                func, obj, e, params, r 
-                            )
-                        )
-
-                        r -= 1
-
-            if f == None:
-                self.logger.warning("Falling back to another object.")
-            else:
-                return f
-            
-
-        self.logger.critical(
-            "All objs failed to safely execute. {} could not execute on {}".format(
-                func, objs
-            )
-        )
-        raise (
-            ValueError(
-                "All objs failed to safely execute. {} could not execute on {}".format(
-                    func, objs
-                )
-            )
-        )
 
     def watch_stakes(self): # ethereum
         self.logger.info("Started watching stakes")
         while True:
             self.logger.info("Checking for new stakes")
             previous_height = self.state.ethereum_height
-            current_height = self.safely_execute(self.eth_nodes, ["eth.block_number"]) - ETH_REORG_PROTECTION
+            current_height = self.eth.eth.block_number - ETH_REORG_PROTECTION
             self.logger.info("Current height: {}".format(current_height))
 
             self.logger.info("Getting stakes between {} and {}".format(previous_height, current_height))
@@ -131,21 +55,25 @@ class Indexer:
                 time.sleep(2)
                 continue
 
-            event_filter = self.safely_execute(self.flip_staker_contracts, ["events.Staked.createFilter"], [{"fromBlock": hex(previous_height), "toBlock": hex(current_height)}])
+            event_filter = self.flip_staker_contract.events.Staked.createFilter(
+                fromBlock=hex(previous_height),
+                toBlock=hex(current_height)
+            )
+
             stakes = event_filter.get_all_entries()
             self.logger.info("A total of {} stake events found between {} and {}".format(len(stakes), previous_height, current_height))
 
             for stake in stakes:
-                address = self.chainflip_primary.ss58_encode(stake["args"]["nodeID"].hex())
+                address = self.chainflip.ss58_encode(stake["args"]["nodeID"].hex())
                 Stake.create(hash = stake["transactionHash"].hex(), amount = stake["args"]["amount"], initiated_height = stake["blockNumber"], address=address)
 
             self.state.ethereum_height = current_height + 1
             self.state.save()
 
     def get_confirmations(self, block: int): # gets according stakes on the chainflip chain
-        hash = self.safely_execute(self.chainflip_nodes, ["get_block_hash"], [[block]])
+        hash = self.chainflip.get_block_hash(block)
 
-        events = self.safely_execute(self.chainflip_nodes, ["get_events"], [[hash]])
+        events = self.chainflip.get_events(hash)
 
         for event in events:
             # figure out unstakes as well
@@ -181,7 +109,7 @@ class Indexer:
     def watch_confirmations(self):
         while True:
             previous_height = self.state.chainflip_height
-            current_height = self.safely_execute(self.chainflip_nodes, ["get_block"])["header"]["number"] - CHAINFLIP_REORG_PROTECTION
+            current_height = self.chainflip.get_block()["header"]["number"] - CHAINFLIP_REORG_PROTECTION
 
             if current_height - previous_height < CHAINFLIP_BLOCK_DELAY:
                 time.sleep(2)
