@@ -14,28 +14,43 @@ class InvalidBlockHeight(jsonrpc.BaseError):
 
 @api_v1.method(errors=[InvalidBlockHeight])
 def get_balance(address: str, ethereum_height: int, chainflip_height: int) -> dict:
-    if indexer.state.chainflip_height < chainflip_height or indexer.state.ethereum_height < ethereum_height:
+    if ethereum_height == 0:
+        ethereum_height = State[1].ethereum_height
+    if chainflip_height == 0:
+        chainflip_height = State[1].chainflip_height
+
+    if State[1].chainflip_height < chainflip_height or State[1].ethereum_height < ethereum_height:
         raise InvalidBlockHeight() 
 
+    pending = 0
+    pending_stakes = Stake.select().where(Stake.address==address, Stake.initiated_height<=ethereum_height, Stake.completed_height >= chainflip_height)
+    for stake in pending_stakes:
+        pending += stake.amount
+
+    completed = 0
+    completed_stakes = Stake.select().where(Stake.address==address, Stake.initiated_height <= ethereum_height, Stake.completed_height <= chainflip_height)
+    for stake in completed_stakes:
+        completed += stake.amount
+
+    uncompleted = 0
+    uncompleted_stakes = Stake.select().where(Stake.address==address, Stake.initiated_height > ethereum_height, Stake.completed_height <= chainflip_height)
+    for stake in uncompleted_stakes:
+        uncompleted += stake.amount
 
     block_hash = indexer.chainflip.get_block_hash(chainflip_height)
-    validator_balance = indexer.chainflip.query({"module": "Flip", "storage_function": "Account", "block_hash": block_hash, "params": [address]})['stake']
+    validator_balance = indexer.chainflip.query(module="Flip", storage_function="Account", block_hash=block_hash, params=[address])['stake']
 
-    stakes = Stake.select().where(Stake.address==address, Stake.initiated_height <= ethereum_height, Stake.completed_height >= chainflip_height) # pending stakes
-    # TODo: incoroporate claims and claimexpired.
+    staked_amount = pending + completed
+    rewards = float(str(validator_balance))- staked_amount - uncompleted
 
-    staked_amount = 0
-    for stake in stakes:
-        staked_amount += stake.amount
-
-    r = {"address": address, "staked_balance": staked_amount, "rewards": float(str(validator_balance))-staked_amount}
+    r = {"address": address, "staked_balance": staked_amount, "rewards": rewards}
 
     return r
 
 # get state of database
 @api_v1.method()
 def get_state() -> dict:
-    return {"ethereum_height": indexer.state.ethereum_height, "chainflip_height": indexer.state.chainflip_height}
+    return {"ethereum_height": State[1].ethereum_height, "chainflip_height": State[1].chainflip_height}
 
 
 class Server(uvicorn.Server):
@@ -68,3 +83,4 @@ def start(indexer_, port):
         time.sleep(2)
 
     
+
