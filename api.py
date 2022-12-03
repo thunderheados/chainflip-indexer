@@ -4,6 +4,9 @@ import uvicorn
 import time
 import contextlib
 import json
+import decimal
+
+decimal.getcontext().prec = 64
 
 indexer = None
 api_v1 = jsonrpc.Entrypoint("/api/v1/jsonrpc")
@@ -43,7 +46,7 @@ def get_balance(address: str, ethereum_height: int, chainflip_height: int) -> di
     staked_amount = pending + completed
     rewards = float(str(validator_balance))- staked_amount - uncompleted
 
-    r = {"address": address, "staked_balance": staked_amount, "rewards": rewards}
+    r = {"address": address, "staked_balance": decimal.Decimal(staked_amount), "rewards": decimal.Decimal(rewards)}
 
     return r
 

@@ -4,3 +4,4 @@ peewee==3.14.8
 uvicorn==0.18.3
 web3==5.26.0
 substrate-interface==1.2.9
+tqdm

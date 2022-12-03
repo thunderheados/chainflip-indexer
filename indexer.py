@@ -172,6 +172,7 @@ class Indexer:
     def sync(self):
         # TODO: implement claims to the calculation
         while True:
+            time.sleep(2)
             with db.atomic() as transaction:
                 self.watch_stakes()
                 self.watch_confirmations()
