@@ -10,14 +10,15 @@ import json
 import time
 
 MAX_CALL_RETRIES = 5
-THREADING_DELAY = 0.01
+THREADING_DELAY = 0.02
 
 ETH_REORG_PROTECTION = 5
 ETH_BLOCK_DELAY = 5
 
 CHAINFLIP_REORG_PROTECTION = 5
 CHAINFLIP_BLOCK_DELAY = 5
-CHAINFLIP_BATCH_SIZE = 10
+CHAINFLIP_BATCH_SIZE = 50
+CHAINFLIP_SS58_PREFIX = 2112
 
 # allows threading functions to give return values.
 class Request(Thread):
@@ -56,7 +57,7 @@ class Indexer:
 
         self.state = State[1]
 
-    def watch_stakes(self): # ethereum
+    def watch_eth(self): # ethereum
         self.logger.info("Checking for new stakes")
         previous_height = self.state.ethereum_height
         current_height = self.eth.eth.block_number - ETH_REORG_PROTECTION
@@ -76,28 +77,80 @@ class Indexer:
         self.logger.info("A total of {} stake events found between {} and {}".format(len(stakes), previous_height, current_height))
 
         id = Stake.select().order_by(Stake.id.desc()).get().id
-        bulk_stakes = []
+        bulk_inserts = []
         for stake in tqdm(stakes):
             address = self.chainflip.ss58_encode(stake["args"]["nodeID"].hex())
             s = Stake.select().where(Stake.hash==stake["transactionHash"].hex())
             
             if s == None:
                 id += 1
-                bulk_stakes.append(Stake(id=id, hash = stake["transactionHash"].hex(), amount = stake["args"]["amount"], initiated_height = stake["blockNumber"], address=address))
+                bulk_inserts.append(Stake(id=id, hash = stake["transactionHash"].hex(), amount = stake["args"]["amount"], initiated_height = stake["blockNumber"], address=address))
             else:
                 self.logger.info("Watch Stakes is behind confirmations, modifying {} stake".format(stake["transactionHash"].hex()))
                 s.initiated_height=stake["blockNumber"]
                 s.save()
 
 
+        event_filter = self.eth.eth.filter({
+            "fromBlock": hex(previous_height),
+            "toBlock": hex(current_height),
+            "address": "0xd654BBBd3416C65e9B9Cf8E6618907679Ef840A9",
+            "topics": [
+                "0x38045dba3d9ee1fee641ad521bd1cf34c28562f6658772ee04678edf17b9a3bc"
+            ]
+        })
+
+        events = event_filter.get_all_entries()
+
+        for event in events:
+            msg_hash = event["data"][128:192]
+
+            claim = Claim.select().where(Stake.msg_hash==msg_hash)
+
+            tx = self.eth.eth.get_transaction_receipt(event["transactionHash"])
+            amount = int(tx["logs"][0]["data"][2:66], 16)
+            start_time = int(tx["logs"][1]["data"][66:130],16)
+            address = ss58_encode(tx["logs"][1]["topics"][1], CHAINFLIP_SS58_PREFIX)
+
+            if claim == None:
+                id += 1
+                bulk_inserts.append(Claim(id=id, msg_hash=msg_hash, start_time=start_time, amount=amount, address=address))
+            else:
+                self.logger.info("Watch Stakes is behind confirmations, modifying {} claim".format(event["transactionHash"].hex()))
+                claim.start_time=start_time
+
+            claim.save()
+
+
         self.logger.info("Paired up all stakes, inserting...")
-        Stake.bulk_create(bulk_stakes, batch_size=250)
+        Stake.bulk_create(bulk_inserts, batch_size=250)
+
+        event_filter = self.flip_staker_contract.events.ClaimExecuted.createFilter(
+            fromBlock=hex(previous_height),
+            toBlock=hex(current_height)
+        )
+
+        events = event_filter.get_all_entries()
+        for event in events:
+            # get the claims that it executed
+            pending_claim = self.flip_staker_contract.functions.getPendingClaim(event["args"]["nodeID"]).call(block_identifier=event["blockNumber"]-1)
+
+            claim = Claim.select().where(Stake.start_time==event["args"]["startTime"], Stake.amount==event["args"]["amount"])
+
+            if claim == None:
+                self.logger.fatal("Claim not found for {} {} {}".format(event["args"]["startTime"], event["args"]["amount"], event["args"]["nodeID"]))
+                sys.exit(1)
+            else:
+                self.logger.info("Claim {} completed".format(claim.id))
+                claim.completed_height = event["blockNumber"]
+                claim.save()
+
         self.state.ethereum_height = current_height + 1
         self.state.save()
 
 
     @retry(stop_max_attempt_number=MAX_CALL_RETRIES)
-    def get_confirmations(self, block: int): # gets according stakes on the chainflip chain
+    def index_chainflip_block(self, block: int): # gets according stakes on the chainflip chain
         hash = self.chainflip.get_block_hash(block)
 
         events = self.chainflip.get_events(hash)
@@ -128,12 +181,27 @@ class Indexer:
                     v.save()
 
                     self.logger.info("Added {} balance to validator {}".format(args["stake_added"], args["account_id"]))
-            elif "claim" in event.value["event_id"].lower():
-                self.logger.info("CLAIM"+ str(event))
+            elif event.value["event_id"] == "ThreshholdSignatureRequest":
+                # get original extrinsic
+                identifier = "{}-{}".format(block, event.value["extrinsic_idx"])
+
+                extrinsic = self.chainflip.retrieve_extrinsic_by_identifier(identifier).extrinsic
+
+                msg_hash = event.value["attributes"][3]
+
+                claim = Claim.select().where(Claim.msg_hash==msg_hash).first()
+                if claim == None:
+                    self.logger.warning("Claim not found for event: {}".format(event))
+                    claim = Claim.create(msg_hash=msg_hash, initiated_height=block, chainflip_hash = extrinsic.value["extrinsic_hash"], amount = extrinsic.value["call"]["call_args"][0]["value"]["Exact"], address = extrinsic.value["address"])
+                else:
+                    claim.initiated_height = block
+                    claim.chainflip_hash = extrinsic.value["extrinsic_hash"]
+
+                    claim.save()
 
         return True
 
-    def watch_confirmations(self):
+    def watch_chainflip(self):
         previous_height = self.state.chainflip_height
         current_height = self.chainflip.get_block()["header"]["number"] - CHAINFLIP_REORG_PROTECTION
 
@@ -145,7 +213,7 @@ class Indexer:
         blocks = []
         threads = []
         for block in range(previous_height+1, min(previous_height+CHAINFLIP_BATCH_SIZE+1, current_height)):
-            t = Request(target=self.get_confirmations, args=[block])
+            t = Request(target=self.index_chainflip_block, args=[block])
             blocks.append(block)
             t.start()
 
@@ -162,17 +230,10 @@ class Indexer:
         self.state.chainflip_height = previous_height + CHAINFLIP_BATCH_SIZE
         self.state.save()
 
-    def loop(self):
-        while True:
-            with db.atomic() as transaction:
-                self.get_stakes()
-                self.watch_confirmations()
-            transaction.commit()
-
     def sync(self):
         # TODO: implement claims to the calculation
         while True:
             time.sleep(2)
             with db.atomic() as transaction:
-                self.watch_stakes()
-                self.watch_confirmations()
+                self.watch_eth()
+                self.watch_chainflip()

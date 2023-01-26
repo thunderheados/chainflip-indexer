@@ -10,13 +10,11 @@ class State(Model):
     class Meta:
         database = db
 
-# burns
-
 class Stake(Model):
     hash = CharField(null = True)
     amount = FloatField()
     initiated_height = IntegerField(null = True) # height the stake was submitted on eth
-    completed_height = IntegerField(null = True) # chainflip confirmation on chainflip chain
+    completed_height = IntegerField(null = True) # chainflip confirmation on chainflip
     address = CharField()
 
     class Meta:
@@ -24,9 +22,12 @@ class Stake(Model):
 
 class Claim(Model):
     chainflip_hash = CharField(null = True)
-    initiated_height = IntegerField(null = True)
+    initiated_height = IntegerField(null = True) # height the claim was submitted on chainflip
+    completed_height = IntegerField(null = True) # the height the claim was completed on eth
     amount = FloatField()
-    claim_signature = CharField(null = True)
+    #  claim_signature = CharField(null = True)
+    msg_hash = CharField(null = True)
+    start_time = IntegerField(null = True)
     address = CharField()
 
     class Meta:
