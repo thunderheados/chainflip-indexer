@@ -1,3 +1,6 @@
+#!/usr/bin/env python # -*- coding: utf-8 -*-
+
+
 from substrateinterface import SubstrateInterface
 from substrateinterface.utils.ss58 import ss58_decode, ss58_encode
 from models import *
@@ -12,15 +15,8 @@ import time
 import sys
 
 MAX_CALL_RETRIES = 1
-THREADING_DELAY = 0.02
-
-ETH_REORG_PROTECTION = 0
-ETH_BLOCK_DELAY = 2 
-
-CHAINFLIP_REORG_PROTECTION = 0
-CHAINFLIP_BLOCK_DELAY = 2
-CHAINFLIP_BATCH_SIZE = 1
 CHAINFLIP_SS58_PREFIX = 2112
+SYNC_THRESHOLD = 50
 
 # allows threading functions to give return values.
 class Request(Thread):
@@ -46,6 +42,10 @@ class Indexer:
         flip_staker_abi_path: str,
         node_evm: str,
         node_substrate: str,
+        chainflip_batch_size: int = 4,
+        threading_delay: float = 0.02,
+        eth_reorg_protection: int = 2,
+        chainflip_reorg_protection: int = 0,
     ):
 
         # create providers
@@ -62,18 +62,24 @@ class Indexer:
 
         self.state = State[1]
 
+        self.batch_size = chainflip_batch_size
+        self.thread_delay = threading_delay
+
+        self.eth_reorg_protection = eth_reorg_protection
+        self.chainflip_reorg_protection = chainflip_reorg_protection
+
     def watch_eth(self):  # ethereum
         with db.atomic():
             self.logger.info("Checking for new stakes")
             previous_height = self.state.ethereum_height
-            current_height = self.eth.eth.block_number - ETH_REORG_PROTECTION
+            current_height = self.eth.eth.block_number - self.eth_reorg_protection
             self.logger.info("Current height: {}".format(current_height))
 
             self.logger.info(
                 "Getting stakes between {} and {}".format(previous_height, current_height)
             )
 
-            if current_height - previous_height < ETH_BLOCK_DELAY:
+            if current_height == previous_height:
                 return
 
             event_filter = self.flip_staker_contract.events.Staked.createFilter(
@@ -208,7 +214,6 @@ class Indexer:
             self.state.ethereum_height = current_height + 1
             self.state.save()
 
-    @retry(stop_max_attempt_number=MAX_CALL_RETRIES)
     def index_chainflip_block(
         self, block: int
     ):  # gets according stakes on the chainflip chain
@@ -318,47 +323,81 @@ class Indexer:
     def watch_chainflip(self):
         previous_height = self.state.chainflip_height
         current_height = (
-            self.chainflip.get_block()["header"]["number"] - CHAINFLIP_REORG_PROTECTION
+            self.chainflip.get_block()["header"]["number"] - self.chainflip_reorg_protection
         )
 
-        if current_height - previous_height < CHAINFLIP_BLOCK_DELAY:
+        if current_height == previous_height:
             return
 
         self.logger.info(
             "Starting threads for blocks between {} and {}".format(
                 previous_height + 1,
-                min(previous_height + CHAINFLIP_BATCH_SIZE, current_height),
+                min(previous_height + self.batch_size, current_height),
             )
         )
 
         blocks = []
         threads = []
-        with db.atomic():
-            for block in range(
-                previous_height + 1,
-                min(previous_height + CHAINFLIP_BATCH_SIZE + 1, current_height),
-            ):
-                t = Request(target=self.index_chainflip_block, args=[block])
-                blocks.append(block)
-                t.start()
-
-                threads.append(t)
-                time.sleep(THREADING_DELAY)
-
-            for i, thread in enumerate(threads):
-                a = thread.join()
-
-                if not a:
+        for block in range(previous_height + 1, current_height):
+            with db.atomic():
+                if not self.index_chainflip_block(block):
                     self.logger.fatal(
-                        "Thread returned false, block {} failed to sync".format(blocks[i])
+                        "Block {} failed to sync".format(block) 
                     )
+
                     quit()
+                else:
+                    self.logger.info("Succesfully synced block {}".format(block))
 
-            self.state.chainflip_height = previous_height + CHAINFLIP_BATCH_SIZE
-            self.state.save()
 
-    def sync(self):
-        # TODO: implement claims to the calculation
+                self.state.chainflip_height += 1
+                self.state.save()
+
+    def sync_chainflip(self, target_height: int, batch_size: int, thread_delay: float):
+        previous_height = self.state.chainflip_height
+
+        self.logger.info("Syncing chainflip from {} to {}".format(previous_height, target_height))
+
+        # create batches
+        for batch in range(previous_height, target_height, batch_size):
+            self.logger.info("Starting batch {} to {}".format(batch+1, min(batch + batch_size, target_height)))
+
+            blocks = []
+            threads = []
+            with db.atomic():
+                for block in range(batch+1, min(batch+1 + batch_size, target_height)):
+                    t = Request(target=self.index_chainflip_block, args=[block])
+                    blocks.append(block)
+                    t.start()
+
+                    threads.append(t)
+                    time.sleep(thread_delay)
+
+                for i, thread in enumerate(threads):
+                    a = thread.join()
+
+                    if not a:
+                        self.logger.fatal(
+                            "Thread returned false, block {} failed to sync".format(blocks[i])
+                        )
+                        quit()
+                    else:
+                        self.logger.info(
+                            "Thread returned true, block {} succesfully synced".format(blocks[i])
+                        )
+
+                self.state.chainflip_height = min(batch + batch_size, target_height)
+                self.state.save()
+
+    def start(self):
+        latest = self.chainflip.get_block()["header"]["number"] - self.chainflip_reorg_protection
+
+        while latest - self.state.chainflip_height > SYNC_THRESHOLD:
+            self.sync_chainflip(latest, self.batch_size, self.thread_delay)
+
+            latest = self.chainflip.get_block()["header"]["number"] - self.chainflip_reorg_protection
+
         while True:
             self.watch_eth()
             self.watch_chainflip()
+

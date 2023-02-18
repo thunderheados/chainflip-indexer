@@ -8,7 +8,7 @@ def main(config_path: str):
     config = json.loads(open(config_path).read())
 
     indexer = Indexer(**config)
-    sync = Process(target=indexer.sync, args=())
+    sync = Process(target=indexer.start, args=())
     sync.start()
 
     api = Process(target=start, args=(indexer, 3000,))
