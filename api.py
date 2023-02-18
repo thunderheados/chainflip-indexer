@@ -25,26 +25,35 @@ def get_balance(address: str, ethereum_height: int, chainflip_height: int) -> di
     if State[1].chainflip_height < chainflip_height or State[1].ethereum_height < ethereum_height:
         raise InvalidBlockHeight() 
 
-    pending = 0
-    pending_stakes = Stake.select().where(Stake.address==address, Stake.initiated_height<=ethereum_height, Stake.completed_height >= chainflip_height)
-    for stake in pending_stakes:
-        pending += stake.amount
+    pending_stakes = 0
+    for stake in Stake.select().where(Stake.address==address, Stake.initiated_height<=ethereum_height, Stake.completed_height >= chainflip_height):
+        pending_stakes += stake.amount
 
-    completed = 0
-    completed_stakes = Stake.select().where(Stake.address==address, Stake.initiated_height <= ethereum_height, Stake.completed_height <= chainflip_height)
-    for stake in completed_stakes:
-        completed += stake.amount
+    completed_stakes = 0
+    for stake in Stake.select().where(Stake.address==address, Stake.initiated_height <= ethereum_height, Stake.completed_height <= chainflip_height):
+        completed_stakes += stake.amount
 
-    uncompleted = 0
-    uncompleted_stakes = Stake.select().where(Stake.address==address, Stake.initiated_height > ethereum_height, Stake.completed_height <= chainflip_height)
-    for stake in uncompleted_stakes:
-        uncompleted += stake.amount
+    uncompleted_stakes = 0
+    for stake in Stake.select().where(Stake.address==address, Stake.initiated_height > ethereum_height, Stake.completed_height <= chainflip_height):
+        uncompleted_stakes += stake.amount
+
+    pending_claims = 0
+    for claim in Claim.select().where(Claim.node==address, Claim.initiated_height <= chainflip_height, Claim.completed_height >= ethereum_height):
+        pending_claims += claim.amount
+
+    completed_claims = 0
+    for claim in Claim.select().where(Claim.node==address, Claim.initiated_height <= chainflip_height, Claim.completed_height <= ethereum_height):
+        completed_claims += claim.amount
+
+    uncompleted_claims = 0
+    for claim in Claim.select().where(Claim.node==address, Claim.initiated_height > chainflip_height, Claim.completed_height <= ethereum_height):
+        uncompleted_claims += claim.amount
 
     block_hash = indexer.chainflip.get_block_hash(chainflip_height)
     validator_balance = indexer.chainflip.query(module="Flip", storage_function="Account", block_hash=block_hash, params=[address])['stake']
 
-    staked_amount = pending + completed
-    rewards = float(str(validator_balance))- staked_amount - uncompleted
+    staked_amount = pending_stakes + completed_stakes - completed_claims - pending_claims
+    rewards = float(str(validator_balance)) - staked_amount - uncompleted_stakes + uncompleted_claims
 
     r = {"address": address, "staked_balance": decimal.Decimal(staked_amount), "rewards": decimal.Decimal(rewards)}
 
