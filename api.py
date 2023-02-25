@@ -138,7 +138,7 @@ def start(indexer_, port):
     app = jsonrpc.API()
     app.bind_entrypoint(api_v1)
 
-    server = Server(uvicorn.Config(app, host="0.0.0.0", port=port, debug=True))
+    server = Server(uvicorn.Config(app, host="0.0.0.0", port=port))
     server.run()
 
     while server.run_in_thread():

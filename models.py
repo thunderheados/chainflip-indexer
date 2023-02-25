@@ -1,6 +1,6 @@
 from peewee import *
 
-db = SqliteDatabase("db", pragmas={"journal_mode": "wal"})
+db = SqliteDatabase("/code/data/db.sqlite3")
 #  db = PostgresqlDatabase('root', user='root')
 
 

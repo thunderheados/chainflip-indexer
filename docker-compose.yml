@@ -1,0 +1,11 @@
+version: "3"
+
+services:
+  chainflip-indexer:
+    container_name: chainflip-indexer
+    build: .
+    ports:
+      - "3000:3000"
+    volumes:
+      - ${PWD}/config.json:/code/config.json
+      - ${PWD}/data:/code/data

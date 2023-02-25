@@ -1,0 +1,8 @@
+{
+  "flip_staker_address": "0xff99f65d0042393079442f68f47c7ae984c3f930",
+  "flip_staker_abi_path": "flip_staker_abi.json",
+  "node_evm": "https://eth-goerli.g.alchemy.com/v2",
+  "node_substrate": "http://localhost:9933",
+  "chainflip_batch_size": 50,
+  "threading_delay":0.045
+}
