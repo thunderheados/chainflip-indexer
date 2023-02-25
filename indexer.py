@@ -239,6 +239,13 @@ class Indexer:
                 # args look like (address, staked_amount, <not sure yet, but is always the same as staked_amount>)
                 args = event.value["attributes"]
 
+                args = {
+                    "account_id": args[0],
+                    "tx_hash": args[1],
+                    "stake_added": args[2],
+                    "stake_total": args[3],
+                }
+
                 self.logger.info(
                     "index: {}, args {}".format(event.value["extrinsic_idx"], args)
                 )
