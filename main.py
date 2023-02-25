@@ -4,6 +4,7 @@ from api import start
 import json
 import time
 
+
 def main(config_path: str):
     config = json.loads(open(config_path).read())
 
@@ -22,6 +23,7 @@ def main(config_path: str):
         api.terminate()
         sync.join()
         api.join()
+
 
 if __name__ == "__main__":
     main("./config.json")

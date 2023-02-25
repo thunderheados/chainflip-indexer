@@ -76,7 +76,9 @@ class Indexer:
             self.logger.info("Current height: {}".format(current_height))
 
             self.logger.info(
-                "Getting stakes between {} and {}".format(previous_height, current_height)
+                "Getting stakes between {} and {}".format(
+                    previous_height, current_height
+                )
             )
 
             if current_height == previous_height:
@@ -188,24 +190,32 @@ class Indexer:
                     event["args"]["nodeID"]
                 ).call(block_identifier=event["blockNumber"] - 1)
 
-                exists = Claim.select().where(
-                    Claim.amount == pending_claim[0],
-                    Claim.staker == pending_claim[1],
-                    Claim.start_time == pending_claim[2],
-                    Claim.expiry_time == pending_claim[3],
-                ).count()
+                exists = (
+                    Claim.select()
+                    .where(
+                        Claim.amount == pending_claim[0],
+                        Claim.staker == pending_claim[1],
+                        Claim.start_time == pending_claim[2],
+                        Claim.expiry_time == pending_claim[3],
+                    )
+                    .count()
+                )
 
                 if exists == 0:
                     self.logger.fatal("Claim {} not found".format(event["args"]))
 
                     raise Exception("Claim not found")
                 else:
-                    claim = Claim.select().where(
-                        Claim.amount == pending_claim[0],
-                        Claim.staker == pending_claim[1],
-                        Claim.start_time == pending_claim[2],
-                        Claim.expiry_time == pending_claim[3],
-                    ).get()
+                    claim = (
+                        Claim.select()
+                        .where(
+                            Claim.amount == pending_claim[0],
+                            Claim.staker == pending_claim[1],
+                            Claim.start_time == pending_claim[2],
+                            Claim.expiry_time == pending_claim[3],
+                        )
+                        .get()
+                    )
 
                     self.logger.info("Claim {} completed".format(claim.id))
                     claim.completed_height = event["blockNumber"]
@@ -273,10 +283,15 @@ class Indexer:
                             args["stake_added"], args["account_id"]
                         )
                     )
-            elif event.value["event_id"] == "ThresholdSignatureRequest" and event.value["event"]["module_id"] == "Staking":
+            elif (
+                event.value["event_id"] == "ThresholdSignatureRequest"
+                and event.value["event"]["module_id"] == "Staking"
+            ):
                 # get original extrinsic
                 identifier = "{}-{}".format(block, event.value["extrinsic_idx"])
-                self.logger.info("Found claim initiation with identifier {}".format(identifier))
+                self.logger.info(
+                    "Found claim initiation with identifier {}".format(identifier)
+                )
 
                 extrinsic = self.chainflip.retrieve_extrinsic_by_identifier(
                     identifier
@@ -301,7 +316,15 @@ class Indexer:
 
                     claim.save()
             elif event.value["event_id"] == "ClaimExpired":
-                claim = Claim.select().where(Claim.node==event.value["attributes"][0], Claim.expired_height==None).order_by(Claim.id.asc()).first()
+                claim = (
+                    Claim.select()
+                    .where(
+                        Claim.node == event.value["attributes"][0],
+                        Claim.expired_height == None,
+                    )
+                    .order_by(Claim.id.asc())
+                    .first()
+                )
                 if claim == None:
                     self.logger.fatal("Claim not found for event: {}".format(event))
                     raise Exception("Claim not found")
@@ -310,14 +333,13 @@ class Indexer:
                     claim.expired_height = block
                     claim.save()
 
-
-
         return True
 
     def watch_chainflip(self):
         previous_height = self.state.chainflip_height
         current_height = (
-            self.chainflip.get_block()["header"]["number"] - self.chainflip_reorg_protection
+            self.chainflip.get_block()["header"]["number"]
+            - self.chainflip_reorg_protection
         )
 
         if current_height == previous_height:
@@ -335,14 +357,11 @@ class Indexer:
         for block in range(previous_height + 1, current_height):
             with db.atomic():
                 if not self.index_chainflip_block(block):
-                    self.logger.fatal(
-                        "Block {} failed to sync".format(block) 
-                    )
+                    self.logger.fatal("Block {} failed to sync".format(block))
 
                     quit()
                 else:
                     self.logger.info("Succesfully synced block {}".format(block))
-
 
                 self.state.chainflip_height += 1
                 self.state.save()
@@ -350,16 +369,24 @@ class Indexer:
     def sync_chainflip(self, target_height: int, batch_size: int, thread_delay: float):
         previous_height = self.state.chainflip_height
 
-        self.logger.info("Syncing chainflip from {} to {}".format(previous_height, target_height))
+        self.logger.info(
+            "Syncing chainflip from {} to {}".format(previous_height, target_height)
+        )
 
         # create batches
         for batch in range(previous_height, target_height, batch_size):
-            self.logger.info("Starting batch {} to {}".format(batch+1, min(batch + batch_size, target_height)))
+            self.logger.info(
+                "Starting batch {} to {}".format(
+                    batch + 1, min(batch + batch_size, target_height)
+                )
+            )
 
             blocks = []
             threads = []
             with db.atomic():
-                for block in range(batch+1, min(batch+1 + batch_size, target_height)):
+                for block in range(
+                    batch + 1, min(batch + 1 + batch_size, target_height)
+                ):
                     t = Request(target=self.index_chainflip_block, args=[block])
                     blocks.append(block)
                     t.start()
@@ -372,12 +399,16 @@ class Indexer:
 
                     if not a:
                         self.logger.fatal(
-                            "Thread returned false, block {} failed to sync".format(blocks[i])
+                            "Thread returned false, block {} failed to sync".format(
+                                blocks[i]
+                            )
                         )
                         quit()
                     else:
                         self.logger.info(
-                            "Thread returned true, block {} succesfully synced".format(blocks[i])
+                            "Thread returned true, block {} succesfully synced".format(
+                                blocks[i]
+                            )
                         )
 
                 self.state.chainflip_height = min(batch + batch_size, target_height)
@@ -386,14 +417,19 @@ class Indexer:
     def start(self):
         self.watch_eth()
 
-        latest = self.chainflip.get_block()["header"]["number"] - self.chainflip_reorg_protection
+        latest = (
+            self.chainflip.get_block()["header"]["number"]
+            - self.chainflip_reorg_protection
+        )
 
         while latest - self.state.chainflip_height > SYNC_THRESHOLD:
             self.sync_chainflip(latest, self.batch_size, self.thread_delay)
 
-            latest = self.chainflip.get_block()["header"]["number"] - self.chainflip_reorg_protection
+            latest = (
+                self.chainflip.get_block()["header"]["number"]
+                - self.chainflip_reorg_protection
+            )
 
         while True:
             self.watch_eth()
             self.watch_chainflip()
-

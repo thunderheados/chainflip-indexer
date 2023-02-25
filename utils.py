@@ -3,6 +3,7 @@ import logging
 from scalecodec import ScaleBytes
 from pydantic import BaseModel
 
+
 class CustomFormatter(logging.Formatter):
 
     green = "\x1b[32m"
@@ -39,17 +40,19 @@ ch.setFormatter(CustomFormatter())
 
 logger.addHandler(ch)
 
+
 def get_abi(path: str) -> dict:
-   file = open(path, "r")
+    file = open(path, "r")
 
-   abi = json.loads(file.read())
-   if type(abi) == list:
-       return abi
+    abi = json.loads(file.read())
+    if type(abi) == list:
+        return abi
 
-   if abi["abi"] == None:
-       Raise("Invalid ABI")
+    if abi["abi"] == None:
+        Raise("Invalid ABI")
 
-   return abi["abi"]
+    return abi["abi"]
+
 
 class SigData(BaseModel):
     key_manager_address: bytes
@@ -59,12 +62,14 @@ class SigData(BaseModel):
     nonce: int
     k_time_g_addr: bytes
 
+
 class ClaimSignature(BaseModel):
     sig_data: SigData
     node_id: bytes
     amount: int
     staker: bytes
     expiry_time: int
+
 
 def decode_claim_signature(sb: ScaleBytes) -> ClaimSignature:
     _ = sb.get_next_bytes(4)
@@ -76,15 +81,24 @@ def decode_claim_signature(sb: ScaleBytes) -> ClaimSignature:
     nonce = int(sb.get_next_bytes(32).hex(), 16)
     k_time_g_addr = sb.get_next_bytes(32)[12:]
 
-    sig_data = SigData(key_manager_address=key_man_address, chain_id=chain_id, msg_hash=msg_hash, sig=sig, nonce=nonce, k_time_g_addr=k_time_g_addr)
+    sig_data = SigData(
+        key_manager_address=key_man_address,
+        chain_id=chain_id,
+        msg_hash=msg_hash,
+        sig=sig,
+        nonce=nonce,
+        k_time_g_addr=k_time_g_addr,
+    )
     node_id = sb.get_next_bytes(32)
     amount = int(sb.get_next_bytes(32).hex(), 16)
     staker = sb.get_next_bytes(32)[12:]
     expiry_time = int(sb.get_next_bytes(32).hex(), 16)
 
-    claim_sig = ClaimSignature(sig_data=sig_data, node_id=node_id, amount=amount, staker=staker, expiry_time=expiry_time)
+    claim_sig = ClaimSignature(
+        sig_data=sig_data,
+        node_id=node_id,
+        amount=amount,
+        staker=staker,
+        expiry_time=expiry_time,
+    )
     return claim_sig
-    
-
-
-    
