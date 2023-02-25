@@ -140,7 +140,7 @@ class Indexer:
             except:
                 pass
             bulk_claims = []
-            for claim in claims:
+            for claim in tqdm(claims):
                 # get params of transaction
                 tx = self.eth.eth.getTransaction(claim["transactionHash"])
 
@@ -214,6 +214,7 @@ class Indexer:
             self.state.ethereum_height = current_height + 1
             self.state.save()
 
+    @retry(stop_max_attempt_number=MAX_CALL_RETRIES)
     def index_chainflip_block(
         self, block: int
     ):  # gets according stakes on the chainflip chain
@@ -227,13 +228,6 @@ class Indexer:
             if event.value["event_id"] == "Staked":
                 # args look like (address, staked_amount, <not sure yet, but is always the same as staked_amount>)
                 args = event.value["attributes"]
-
-                args = {
-                    "account_id": args[0],
-                    "tx_hash": args[1],
-                    "stake_added": args[2],
-                    "stake_total": args[3],
-                }
 
                 self.logger.info(
                     "index: {}, args {}".format(event.value["extrinsic_idx"], args)
@@ -279,7 +273,7 @@ class Indexer:
                             args["stake_added"], args["account_id"]
                         )
                     )
-            elif event.value["event_id"] == "ThresholdSignatureRequest":
+            elif event.value["event_id"] == "ThresholdSignatureRequest" and event.value["event"]["module_id"] == "Staking":
                 # get original extrinsic
                 identifier = "{}-{}".format(block, event.value["extrinsic_idx"])
                 self.logger.info("Found claim initiation with identifier {}".format(identifier))
@@ -390,6 +384,8 @@ class Indexer:
                 self.state.save()
 
     def start(self):
+        self.watch_eth()
+
         latest = self.chainflip.get_block()["header"]["number"] - self.chainflip_reorg_protection
 
         while latest - self.state.chainflip_height > SYNC_THRESHOLD:
