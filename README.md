@@ -6,7 +6,7 @@ On [chainflip](https://chainflip.io) the process of staking and claiming FLIP on
 
 ### Stakes & Claims
 
-![stake and claim timeline image](./timelines.png)
+![stake and claim timeline image](./timelines.svg)
 
 Due to this process, if you query both chains at `T-2`, the FLIP is essentially gone, as it is not on the ethereum or state chain, and in a process of transitioning. This can be problematic for a couple reasons particularly if you are trying to keep track of multiple validators that are being staked and claimed from, because tokens can "disappear" at times.
 
