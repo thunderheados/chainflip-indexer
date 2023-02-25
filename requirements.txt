@@ -1,7 +1,10 @@
-fastapi_jsonrpc==2.3.0
-gnosis==0.1.1
+fastapi_jsonrpc==2.4.1
 peewee==3.14.8
-uvicorn==0.18.3
+pydantic==1.9.1
+retrying==1.3.4
+scalecodec==1.0.39
+substrate_interface==1.2.7
+substrateinterface==1.0.0
+tqdm==4.64.0
+uvicorn==0.20.0
 web3==5.26.0
-substrate-interface==1.2.9
-tqdm

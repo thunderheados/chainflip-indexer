@@ -7,8 +7,6 @@ RUn pip install -r requirements.txt
 ADD . /code
 WORKDIR /code
 
-EXPOSE 3000
-
 # echo directory
 CMD ["python", "/code/main.py"]
 
