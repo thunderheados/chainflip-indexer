@@ -27,3 +27,5 @@ Create a config file at `./config.json`, that follows `.example.config.json`
 Start
 `docker compose up`
 
+API Documentation is hosted at https://localhost:3000
+
