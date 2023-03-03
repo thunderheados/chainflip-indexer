@@ -231,6 +231,7 @@ class Indexer:
         hash = self.chainflip.get_block_hash(block)
 
         events = self.chainflip.get_events(hash)
+        extrinsics = self.chainflip.get_block(hash)
         self.logger.info("Block {} has {} events".format(block, len(events)))
 
         for event in events:
@@ -292,17 +293,18 @@ class Indexer:
                     )
             elif (
                 event.value["event_id"] == "ThresholdSignatureRequest"
-                and event.value["event"]["module_id"] == "Staking"
             ):
+                extrinsic = extrinsics[event.value["extrinsic_idx"]]
+                
+                # make sure it originated from a staking.Claim event
+                if extrinsic["call"]["call_module"]["name"] != "Staking":
+                    continue
+                
                 # get original extrinsic
                 identifier = "{}-{}".format(block, event.value["extrinsic_idx"])
                 self.logger.info(
                     "Found claim initiation with identifier {}".format(identifier)
                 )
-
-                extrinsic = self.chainflip.retrieve_extrinsic_by_identifier(
-                    identifier
-                ).extrinsic
 
                 msg_hash = event.value["attributes"][3]
 
