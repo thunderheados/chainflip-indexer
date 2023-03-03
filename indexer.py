@@ -14,9 +14,9 @@ import json
 import time
 import sys
 
-MAX_CALL_RETRIES = 1
+MAX_CALL_RETRIES = 3
 CHAINFLIP_SS58_PREFIX = 2112
-SYNC_THRESHOLD = 50
+SYNC_THRESHOLD = 5
 
 # allows threading functions to give return values.
 class Request(Thread):
@@ -81,7 +81,7 @@ class Indexer:
                 )
             )
 
-            if current_height == previous_height:
+            if current_height == previous_height - 1:
                 return
 
             event_filter = self.flip_staker_contract.events.Staked.createFilter(
@@ -231,7 +231,6 @@ class Indexer:
         hash = self.chainflip.get_block_hash(block)
 
         events = self.chainflip.get_events(hash)
-        extrinsics = self.chainflip.get_block(hash)
         self.logger.info("Block {} has {} events".format(block, len(events)))
 
         for event in events:
@@ -293,18 +292,21 @@ class Indexer:
                     )
             elif (
                 event.value["event_id"] == "ThresholdSignatureRequest"
+                and event.value["extrinsic_idx"] != None # if the event is emitted from the validator making the block there is no actual extrinsic
             ):
-                extrinsic = extrinsics[event.value["extrinsic_idx"]]
-                
-                # make sure it originated from a staking.Claim event
-                if extrinsic["call"]["call_module"]["name"] != "Staking":
-                    continue
-                
                 # get original extrinsic
                 identifier = "{}-{}".format(block, event.value["extrinsic_idx"])
                 self.logger.info(
                     "Found claim initiation with identifier {}".format(identifier)
                 )
+
+                extrinsic = self.chainflip.retrieve_extrinsic_by_identifier(
+                    identifier
+                ).extrinsic
+                
+                # make sure it originated from a staking.Claim event
+                if extrinsic["call"]["call_module"]["name"] != "Staking":
+                    continue
 
                 msg_hash = event.value["attributes"][3]
 
