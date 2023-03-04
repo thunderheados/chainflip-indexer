@@ -310,15 +310,23 @@ class Indexer:
 
                 msg_hash = event.value["attributes"][3]
 
+                if extrinsic.value["call"]["call_args"][0]["value"] == "Max":
+                    amount = int(str(self.chainflip.query(
+                        module="Flip",
+                        storage_function="Account",
+                        block_hash=hash,
+                        params=[extrinsic.value["address"]]
+                    )["stake"]))
+                else:
+                    amount = extrinsic.value["call"]["call_args"][0]["value"]["Exact"]
+
                 claim = Claim.select().where(Claim.msg_hash == msg_hash).first()
                 if claim == None:
                     Claim.create(
                         msg_hash=msg_hash,
                         initiated_height=block,
                         chainflip_hash=extrinsic.value["extrinsic_hash"],
-                        amount=extrinsic.value["call"]["call_args"][0]["value"][
-                            "Exact"
-                        ],
+                        amount=amount,
                         node=extrinsic.value["address"],
                     )
                 else:
